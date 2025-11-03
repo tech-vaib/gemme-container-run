@@ -77,9 +77,11 @@ jobs:
 
               if response.ok:
                   for pr in response.json():
+                      title = pr.get("title", "").strip()
                       merge_commit = pr.get("merge_commit_sha")
-                      if merge_commit and merge_commit in commit_shas:
-                          prs.append(pr["title"])
+                      # Skip empty titles or auto-generated merge PR titles
+                      if merge_commit and merge_commit in commit_shas and title and not title.lower().startswith("merge pull request"):
+                          prs.append(title)
               else:
                   print(f"⚠️ Failed to fetch PRs: {response.status_code}")
           except Exception as e:
