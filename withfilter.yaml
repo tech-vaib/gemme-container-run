@@ -1,0 +1,147 @@
+name: Update Confluence Release Notes
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-confluence:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed to compare tags
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install atlassian-python-api requests
+
+      - name: Collect commits + PRs and update Confluence
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
+          CONFLUENCE_USERNAME: ${{ secrets.CONFLUENCE_USERNAME }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_PAGE_ID: ${{ secrets.CONFLUENCE_PAGE_ID }}
+        run: |
+          python - <<'EOF'
+          import os, subprocess, datetime, requests
+          from atlassian import Confluence
+
+          # --- GitHub Environment ---
+          full_repo = os.getenv("GITHUB_REPOSITORY", "")
+          repo_name = full_repo.split("/")[-1]  # only repo name
+          current_tag = os.getenv("GITHUB_REF_NAME")
+          github_token = os.getenv("GITHUB_TOKEN")
+          api_base = os.getenv("GITHUB_API_URL", "https://api.github.com")
+
+          # --- Determine previous tag ---
+          tags = subprocess.getoutput("git tag --sort=-creatordate").splitlines()
+          last_tag = tags[1] if len(tags) > 1 else None
+
+          print(f"🔖 Current Tag: {current_tag}")
+          print(f"⬅️ Previous Tag: {last_tag if last_tag else 'None (first release)'}")
+
+          # --- Get commit SHAs in chronological order ---
+          rev_list_cmd = f"git rev-list --reverse {last_tag}..{current_tag}" if last_tag else f"git rev-list --reverse {current_tag}"
+          commit_shas = subprocess.getoutput(rev_list_cmd).splitlines()
+
+          # --- Collect commit messages ---
+          commits_dict = {}
+          for sha in commit_shas:
+              msg = subprocess.getoutput(f"git log -1 --format=%s {sha}").strip()
+              commits_dict[sha] = msg
+
+          print(f"✅ Found {len(commits_dict)} commits.")
+
+          # --- Fetch merged PRs ---
+          prs_dict = {}
+          try:
+              prs_url = f"{api_base}/repos/{full_repo}/pulls?state=closed&per_page=100"
+              headers = {"Authorization": f"Bearer {github_token}"}
+              response = requests.get(prs_url, headers=headers, timeout=30)
+
+              if response.ok:
+                  for pr in response.json():
+                      merge_commit = pr.get("merge_commit_sha")
+                      title = pr.get("title", "").strip()
+                      if merge_commit and merge_commit in commit_shas and title and not title.lower().startswith("merge pull request"):
+                          prs_dict[merge_commit] = title
+              else:
+                  print(f"⚠️ Failed to fetch PRs: {response.status_code}")
+          except Exception as e:
+              print(f"⚠️ Error fetching PRs: {e}")
+
+          # --- Build release notes in commit order, skipping merge commits and filtering prefixes ---
+          allowed_prefixes = ("[HIF-", "[PLM-")
+          combined = []
+          seen = set()
+
+          for sha in commit_shas:
+              msg = prs_dict.get(sha, commits_dict[sha])
+
+              # Skip auto-generated merge commits
+              if msg.lower().startswith("merge pull request"):
+                  continue
+
+              # Only include if starts with allowed prefixes
+              if not msg.startswith(allowed_prefixes):
+                  continue
+
+              if msg not in seen:
+                  combined.append(msg)
+                  seen.add(msg)
+
+          # Reverse list so latest commit appears first in page
+          combined.reverse()
+
+          # --- Format header ---
+          release_date = datetime.datetime.utcnow().strftime("%m-%d-%Y %H:%M")
+          header_html = (
+              f"<p><b>Repo Name:</b> {repo_name}<br/>"
+              f"<b>Date:</b> {release_date}<br/>"
+              f"<b>Release Tag:</b> {current_tag}</p>"
+          )
+
+          # --- Build release notes block ---
+          if combined:
+              release_html = header_html + "<ul>" + "".join(f"<li>{msg}</li>" for msg in combined) + "</ul><hr/>"
+          else:
+              release_html = header_html + "<p>No new changes with required prefixes.</p><hr/>"
+
+          # --- Update Confluence ---
+          confluence = Confluence(
+              url=os.environ["CONFLUENCE_URL"],
+              username=os.environ["CONFLUENCE_USERNAME"],
+              password=os.environ["CONFLUENCE_API_TOKEN"],
+              cloud=True,
+          )
+
+          page_id = os.environ["CONFLUENCE_PAGE_ID"]
+          page = confluence.get_page_by_id(page_id=page_id, expand="body.storage")
+          page_title = page["title"]
+          page_content = page["body"]["storage"]["value"]
+
+          # Prepend release notes to the top
+          new_content = release_html + page_content
+
+          confluence.update_page(
+              page_id=page_id,
+              title=page_title,
+              body=new_content,
+              representation="storage",
+          )
+
+          print(f"✅ Confluence page updated successfully for {current_tag}")
+          EOF
