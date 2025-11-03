@@ -48,28 +48,25 @@ jobs:
 
           # --- Determine previous tag ---
           tags = subprocess.getoutput("git tag --sort=-creatordate").splitlines()
-          if len(tags) > 1:
-              last_tag = tags[1]
-          else:
-              last_tag = None
+          last_tag = tags[1] if len(tags) > 1 else None
 
-          latest_commit = subprocess.getoutput("git rev-parse HEAD")[:7]
           print(f"🔖 Current Tag: {current_tag}")
           print(f"⬅️ Previous Tag: {last_tag if last_tag else 'None (first release)'}")
 
-          # --- Collect commits ---
-          if last_tag:
-              commits_output = subprocess.getoutput(f"git log {last_tag}..{current_tag} --pretty=format:'%s'")
-              commit_shas = subprocess.getoutput(f"git rev-list {last_tag}..{current_tag}").splitlines()
-          else:
-              commits_output = subprocess.getoutput(f"git log {current_tag} --pretty=format:'%s'")
-              commit_shas = subprocess.getoutput(f"git rev-list {current_tag}").splitlines()
+          # --- Get commit SHAs in chronological order ---
+          rev_list_cmd = f"git rev-list --reverse {last_tag}..{current_tag}" if last_tag else f"git rev-list --reverse {current_tag}"
+          commit_shas = subprocess.getoutput(rev_list_cmd).splitlines()
 
-          commit_lines = [line.strip() for line in commits_output.splitlines() if line.strip()]
-          print(f"✅ Found {len(commit_lines)} commits for release.")
+          # --- Collect commit messages ---
+          commits_dict = {}
+          for sha in commit_shas:
+              msg = subprocess.getoutput(f"git log -1 --format=%s {sha}").strip()
+              commits_dict[sha] = msg
 
-          # --- Fetch merged PRs in this range ---
-          prs = []
+          print(f"✅ Found {len(commits_dict)} commits.")
+
+          # --- Fetch merged PRs ---
+          prs_dict = {}
           try:
               prs_url = f"{api_base}/repos/{full_repo}/pulls?state=closed&per_page=100"
               headers = {"Authorization": f"Bearer {github_token}"}
@@ -77,18 +74,27 @@ jobs:
 
               if response.ok:
                   for pr in response.json():
-                      title = pr.get("title", "").strip()
                       merge_commit = pr.get("merge_commit_sha")
-                      # Skip empty titles or auto-generated merge PR titles
+                      title = pr.get("title", "").strip()
                       if merge_commit and merge_commit in commit_shas and title and not title.lower().startswith("merge pull request"):
-                          prs.append(title)
+                          prs_dict[merge_commit] = title
               else:
                   print(f"⚠️ Failed to fetch PRs: {response.status_code}")
           except Exception as e:
               print(f"⚠️ Error fetching PRs: {e}")
 
-          # --- Merge commits and PRs, remove duplicates ---
-          combined = sorted(set(commit_lines + prs))
+          # --- Build release notes in commit order, skipping auto merge commits ---
+          combined = []
+          seen = set()
+          for sha in commit_shas:
+              # Prefer PR title if exists
+              msg = prs_dict.get(sha, commits_dict[sha])
+              # Skip auto-generated merge commits
+              if msg.lower().startswith("merge pull request"):
+                  continue
+              if msg not in seen:
+                  combined.append(msg)
+                  seen.add(msg)
 
           # --- Format header ---
           release_date = datetime.datetime.utcnow().strftime("%m-%d-%Y %H:%M")
@@ -100,15 +106,9 @@ jobs:
 
           # --- Build release notes block ---
           if combined:
-              release_html = (
-                  header_html +
-                  "<ul>" + "".join(f"<li>{msg}</li>" for msg in combined) + "</ul><hr/>"
-              )
+              release_html = header_html + "<ul>" + "".join(f"<li>{msg}</li>" for msg in combined) + "</ul><hr/>"
           else:
-              release_html = (
-                  header_html +
-                  "<p>No new changes since last release.</p><hr/>"
-              )
+              release_html = header_html + "<p>No new changes since last release.</p><hr/>"
 
           # --- Update Confluence ---
           confluence = Confluence(
