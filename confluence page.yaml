@@ -3,10 +3,6 @@ name: Update Confluence Release Notes
 on:
   release:
     types: [published]
-  # Optional: Uncomment to also trigger on tag pushes
-  # push:
-  #   tags:
-  #     - '*'
 
 jobs:
   update-confluence:
@@ -50,27 +46,29 @@ jobs:
           github_token = os.getenv("GITHUB_TOKEN")
           api_base = os.getenv("GITHUB_API_URL", "https://api.github.com")
 
-          # --- Find previous tag ---
-          # Sort by creation date, get the 2nd most recent (previous)
-          last_tag = subprocess.getoutput("git tag --sort=-creatordate | sed -n '2p'")
+          # --- Determine previous tag ---
+          tags = subprocess.getoutput("git tag --sort=-creatordate").splitlines()
+          if len(tags) > 1:
+              last_tag = tags[1]
+          else:
+              last_tag = None
+
           latest_commit = subprocess.getoutput("git rev-parse HEAD")[:7]
-
           print(f"🔖 Current Tag: {current_tag}")
-          print(f"⬅️ Previous Tag: {last_tag}")
+          print(f"⬅️ Previous Tag: {last_tag if last_tag else 'None (first release)'}")
 
-          if not last_tag:
-              print("⚠️ No previous tag found. Exiting safely.")
-              exit(0)
+          # --- Collect commits ---
+          if last_tag:
+              commits_output = subprocess.getoutput(f"git log {last_tag}..{current_tag} --pretty=format:'%s'")
+              commit_shas = subprocess.getoutput(f"git rev-list {last_tag}..{current_tag}").splitlines()
+          else:
+              commits_output = subprocess.getoutput(f"git log {current_tag} --pretty=format:'%s'")
+              commit_shas = subprocess.getoutput(f"git rev-list {current_tag}").splitlines()
 
-          # --- Get commits between last and current tag ---
-          commits_output = subprocess.getoutput(f"git log {last_tag}..{current_tag} --pretty=format:'%s'")
           commit_lines = [line.strip() for line in commits_output.splitlines() if line.strip()]
-          print(f"✅ Found {len(commit_lines)} commits between tags.")
+          print(f"✅ Found {len(commit_lines)} commits for release.")
 
-          # --- Get commit SHAs between the two tags ---
-          commit_shas = subprocess.getoutput(f"git rev-list {last_tag}..{current_tag}").splitlines()
-
-          # --- Fetch merged PRs only in this range ---
+          # --- Fetch merged PRs in this range ---
           prs = []
           try:
               prs_url = f"{api_base}/repos/{full_repo}/pulls?state=closed&per_page=100"
@@ -87,9 +85,10 @@ jobs:
           except Exception as e:
               print(f"⚠️ Error fetching PRs: {e}")
 
+          # --- Merge commits and PRs, remove duplicates ---
           combined = sorted(set(commit_lines + prs))
 
-          # --- Format header as requested ---
+          # --- Format header ---
           release_date = datetime.datetime.utcnow().strftime("%m-%d-%Y %H:%M")
           header_html = (
               f"<p><b>Repo Name:</b> {repo_name}<br/>"
@@ -97,9 +96,19 @@ jobs:
               f"<b>Release Tag:</b> {current_tag}</p>"
           )
 
-          print(f"🧾 Preparing Confluence header block for {repo_name} ({current_tag})")
+          # --- Build release notes block ---
+          if combined:
+              release_html = (
+                  header_html +
+                  "<ul>" + "".join(f"<li>{msg}</li>" for msg in combined) + "</ul><hr/>"
+              )
+          else:
+              release_html = (
+                  header_html +
+                  "<p>No new changes since last release.</p><hr/>"
+              )
 
-          # --- Confluence setup ---
+          # --- Update Confluence ---
           confluence = Confluence(
               url=os.environ["CONFLUENCE_URL"],
               username=os.environ["CONFLUENCE_USERNAME"],
@@ -112,13 +121,7 @@ jobs:
           page_title = page["title"]
           page_content = page["body"]["storage"]["value"]
 
-          # --- Build release notes block ---
-          release_html = (
-              header_html +
-              "<ul>" + "".join(f"<li>{msg}</li>" for msg in combined) + "</ul><hr/>"
-          )
-
-          # --- Prepend to existing page content ---
+          # Prepend release notes to the top
           new_content = release_html + page_content
 
           confluence.update_page(
