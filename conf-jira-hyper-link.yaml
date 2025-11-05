@@ -1,0 +1,213 @@
+name: Update Confluence Release Notes
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-confluence:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # fetch full history to access tags
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install atlassian-python-api requests
+
+      - name: Collect commits + PRs and update Confluence
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REF: ${{ github.ref }}
+          CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
+          CONFLUENCE_USERNAME: ${{ secrets.CONFLUENCE_USERNAME }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_PAGE_ID: ${{ secrets.CONFLUENCE_PAGE_ID }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}   # ✅ Configurable Jira Base URL
+        run: |
+          python - <<'EOF'
+          import os, subprocess, datetime, requests, html, re
+          from atlassian import Confluence
+
+          # --- Jira Base URL (configurable from env, fallback to Confluence domain) ---
+          JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "")
+          if not JIRA_BASE_URL:
+              confluence_url = os.getenv("CONFLUENCE_URL", "")
+              jira_base = re.sub(r"/wiki/?$", "", confluence_url)
+              JIRA_BASE_URL = f"{jira_base}/browse/"
+          print(f"🔗 Using Jira Base URL: {JIRA_BASE_URL}")
+
+          # --- GitHub Context ---
+          full_repo = os.getenv("GITHUB_REPOSITORY", "")
+          repo_name = full_repo.split("/")[-1]
+          current_tag = os.getenv("GITHUB_REF_NAME")
+          github_token = os.getenv("GITHUB_TOKEN")
+          api_base = os.getenv("GITHUB_API_URL", "https://api.github.com")
+
+          # --- Determine if tag was created from main ---
+          tag_branch = subprocess.getoutput(f"git name-rev --name-only {current_tag}")
+          is_main_release = tag_branch.strip() in ["main", "origin/main"]
+          print(f"📦 Tag created from branch: {tag_branch} (is_main_release={is_main_release})")
+
+          # --- Find previous tag ---
+          tags = subprocess.getoutput("git tag --sort=-creatordate").splitlines()
+          last_tag = tags[1] if len(tags) > 1 else None
+
+          print(f"🔖 Current Tag: {current_tag}")
+          print(f"⬅️ Previous Tag: {last_tag if last_tag else 'None (first release)'}")
+
+          # --- Get commits in chronological order ---
+          rev_list_cmd = f"git rev-list --reverse {last_tag}..{current_tag}" if last_tag else f"git rev-list --reverse {current_tag}"
+          commit_shas = subprocess.getoutput(rev_list_cmd).splitlines()
+
+          # --- Gather commit messages ---
+          commits_dict = {}
+          for sha in commit_shas:
+              msg = subprocess.getoutput(f"git log -1 --format=%s {sha}").strip()
+              commits_dict[sha] = msg
+
+          print(f"✅ Found {len(commits_dict)} commits between tags.")
+
+          # --- Get merged PRs ---
+          prs_dict = {}
+          try:
+              prs_url = f"{api_base}/repos/{full_repo}/pulls?state=closed&per_page=100"
+              headers = {"Authorization": f"Bearer {github_token}"}
+              response = requests.get(prs_url, headers=headers, timeout=30)
+              if response.ok:
+                  for pr in response.json():
+                      merge_commit = pr.get("merge_commit_sha")
+                      title = pr.get("title", "").strip()
+                      if merge_commit and merge_commit in commit_shas and title and not title.lower().startswith("merge pull request"):
+                          prs_dict[merge_commit] = title
+              else:
+                  print(f"⚠️ Failed to fetch PRs: {response.status_code}")
+          except Exception as e:
+              print(f"⚠️ Error fetching PRs: {e}")
+
+          # --- Regex for filtering and deduplication ---
+          regex1 = re.compile(r'^\[HIF-[0-9]+\]', re.IGNORECASE)
+          regex2 = re.compile(r'^\[PLM-[0-9]+\]', re.IGNORECASE)
+
+          combined = []
+          seen_keys = set()
+
+          for sha in commit_shas:
+              msg = prs_dict.get(sha, commits_dict[sha])
+
+              # Skip merge commits
+              if msg.lower().startswith("merge pull request"):
+                  continue
+
+              # Only include allowed prefixes
+              if not (regex1.match(msg) or regex2.match(msg)):
+                  continue
+
+              # Extract Jira key prefix for deduplication
+              match = regex1.match(msg) or regex2.match(msg)
+              key_prefix = match.group(0) if match else msg
+
+              if key_prefix in seen_keys:
+                  print(f"🔁 Skipping duplicate for key {key_prefix}: {msg}")
+                  continue
+
+              seen_keys.add(key_prefix)
+              combined.append(msg)
+
+          # Reverse so latest commit appears first
+          combined.reverse()
+
+          # --- If tag is from main, drop top commit and its PR title ---
+          if is_main_release and commit_shas:
+              latest_commit = commit_shas[-1]
+              removed_msgs = []
+
+              latest_msg = prs_dict.get(latest_commit, commits_dict.get(latest_commit, ""))
+              if latest_msg and latest_msg in combined:
+                  combined.remove(latest_msg)
+                  removed_msgs.append(latest_msg)
+
+              if latest_commit in prs_dict:
+                  pr_msg = prs_dict[latest_commit]
+                  if pr_msg in combined:
+                      combined.remove(pr_msg)
+                      removed_msgs.append(pr_msg)
+
+              if removed_msgs:
+                  print(f"🗑️ Skipped from main release: {removed_msgs}")
+
+          # --- Print summary before updating Confluence ---
+          print("\n🧾 ===== Release Summary =====")
+          print(f"Repository: {repo_name}")
+          print(f"Tag: {current_tag}")
+          print(f"Total valid changes: {len(combined)}\n")
+
+          if combined:
+              for idx, msg in enumerate(combined, start=1):
+                  print(f"{idx:02d}. {msg}")
+          else:
+              print("No valid commits to include in release notes.")
+          print("🧾 ===========================\n")
+
+          # --- Format Confluence header ---
+          release_date = datetime.datetime.utcnow().strftime("%m-%d-%Y %H:%M")
+          header_html = (
+              f"<p><b>Repo Name:</b> {repo_name}<br/>"
+              f"<b>Date:</b> {release_date}<br/>"
+              f"<b>Release Tag:</b> {current_tag}</p>"
+          )
+
+          # --- Build SAFE HTML block (escape all messages + add Jira links) ---
+          if combined:
+              escaped_items = []
+              for msg in combined:
+                  safe_msg = html.escape(msg)
+                  # Replace [HIF-1234] with clickable Jira link
+                  safe_msg = re.sub(
+                      r'\[?(HIF-\d+)\]?',
+                      lambda m: f'<a href="{JIRA_BASE_URL}{m.group(1)}" target="_blank">{m.group(1)}</a>',
+                      safe_msg
+                  )
+                  escaped_items.append(f"<li>{safe_msg}</li>")
+
+              release_html = header_html + "<ul>" + "".join(escaped_items) + "</ul><hr/>"
+          else:
+              release_html = header_html + "<p>No valid changes for this release.</p><hr/>"
+
+          # --- Update Confluence ---
+          confluence = Confluence(
+              url=os.environ["CONFLUENCE_URL"],
+              username=os.environ["CONFLUENCE_USERNAME"],
+              password=os.environ["CONFLUENCE_API_TOKEN"],
+              cloud=True,
+          )
+
+          page_id = os.environ["CONFLUENCE_PAGE_ID"]
+          page = confluence.get_page_by_id(page_id=page_id, expand="body.storage")
+          page_title = page["title"]
+          page_content = page["body"]["storage"]["value"]
+
+          # Prepend release notes at top of page
+          new_content = release_html + page_content
+
+          confluence.update_page(
+              page_id=page_id,
+              title=page_title,
+              body=new_content,
+              representation="storage",
+          )
+
+          print(f"✅ Confluence page updated successfully for {current_tag}")
+          EOF
