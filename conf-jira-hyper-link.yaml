@@ -1,12 +1,13 @@
 name: Update Confluence Release Notes
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - '*'
 
 jobs:
   update-confluence:
-    runs-on: ubuntu-latest
+    runs-on: [code-linux, code-default]
 
     steps:
       - name: Checkout repository
@@ -165,7 +166,7 @@ jobs:
           release_date = datetime.datetime.utcnow().strftime("%m-%d-%Y %H:%M")
           header_html = (
               f"<p><b>Repo Name:</b> {repo_name}<br/>"
-              f"<b>Date:</b> {release_date}<br/>"
+              f"<b>Release Date:</b> {release_date}<br/>"
               f"<b>Release Tag:</b> {current_tag}</p>"
           )
 
@@ -174,10 +175,10 @@ jobs:
               escaped_items = []
               for msg in combined:
                   safe_msg = html.escape(msg)
-                  # Replace [HIF-1234] with clickable Jira link
+                  # ✅ Replace [HIF-1234] with clickable Jira link (preserves brackets)
                   safe_msg = re.sub(
-                      r'\[?(HIF-\d+)\]?',
-                      lambda m: f'<a href="{JIRA_BASE_URL}{m.group(1)}" target="_blank">{m.group(1)}</a>',
+                      r'\[(HIF-\d+)\]',
+                      lambda m: f'[<a href="{JIRA_BASE_URL}{m.group(1)}" target="_blank">{m.group(1)}</a>]',
                       safe_msg
                   )
                   escaped_items.append(f"<li>{safe_msg}</li>")
