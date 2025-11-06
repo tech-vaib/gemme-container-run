@@ -1,4 +1,15 @@
 check_patterns() {
+      msg="$1"
+      case "$msg" in
+        "[HIF-"[0-9]"]"*) return 0 ;;
+        "[PLM-P"[0-9]"-"[0-9]"]"*) return 0 ;;
+        "Coding style for \"[HIF-"[0-9]"]"*) return 0 ;;
+        "Coding style for \"[PLM-P"[0-9]"-"[0-9]"]"*) return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+
+check_patterns() {
             local msg="$1"
             
             # Pattern 1: [HIF-123] message
