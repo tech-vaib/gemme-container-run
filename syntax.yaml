@@ -1,0 +1,2 @@
+regex3='^Coding style for ["“”]\[PLM-P[0-9]+-[0-9]+\] .+["“”]$'
+regex4='^Coding style for ["“”]\[HIF-[0-9]+\] .+["“”]$'
