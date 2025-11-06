@@ -1,3 +1,11 @@
-regex3='^Coding style for .\[PLM-P[0-9]+-[0-9]+\]'
-regex4='^Coding style for .\[HIF-[0-9]+\]'
-          
+regex3='^Coding style for "\[PLM-P[0-9]+-[0-9]+\]'
+regex4='^Coding style for "\[HIF-[0-9]+\]'
+
+check_patterns() {
+      local msg="$1"
+      echo "$msg" | grep -Eq "$regex1" && return 0
+      echo "$msg" | grep -Eq "$regex2" && return 0
+      echo "$msg" | grep -Eq "$regex3" && return 0
+      echo "$msg" | grep -Eq "$regex4" && return 0
+      return 1
+    }
