@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 3  # Fetch a few commits for safety
+          fetch-depth: 4  # a few commits for safety
 
       - name: Validate PR title or commit message
         env:
@@ -23,20 +23,12 @@ jobs:
 
           echo "🔎 PR Title: $PR_TITLE"
 
-          # Function to test a message against allowed patterns
           check_patterns() {
             local msg="$1"
 
-            # Match: [HIF-123] Some message
             echo "$msg" | grep -qE '^\[HIF-[0-9]+\] .+' && return 0
-
-            # Match: [PLM-P12-345] Some message
             echo "$msg" | grep -qE '^\[PLM-P[0-9]+-[0-9]+\] .+' && return 0
-
-            # Match: Coding style for "[HIF-123] Some message"
             echo "$msg" | grep -qE '^Coding style for "\[HIF-[0-9]+\] .+"' && return 0
-
-            # Match: Coding style for "[PLM-P12-345] Some message"
             echo "$msg" | grep -qE '^Coding style for "\[PLM-P[0-9]+-[0-9]+\] .+"' && return 0
 
             return 1
@@ -50,23 +42,30 @@ jobs:
 
           echo "🔎 Checking commit messages..."
 
-          # Get last 3 commits (for safety)
-          mapfile -t COMMITS < <(git log -3 --pretty=%B)
+          # Capture last 3 commit messages, using delimiter
+          COMMIT_LOG=$(git log -3 --pretty='%B__END__')
 
-          FIRST_COMMIT_MSG="${COMMITS[0]}"
+          # Split commits into array safely
+          IFS='__END__' read -r -a COMMITS <<< "$COMMIT_LOG"
+
+          FIRST_COMMIT_MSG=$(echo "${COMMITS[0]}" | xargs)
+          SECOND_COMMIT_MSG=$(echo "${COMMITS[1]}" | xargs)
+
           echo "🔸 Latest commit message: $FIRST_COMMIT_MSG"
 
-          # Regex pattern for merge commit like: Merge dfgad8c877 into 5d7b68
+          # Regex for merge commits with SHA format
           MERGE_SHA_PATTERN='^Merge [0-9a-f]{7,40} into [0-9a-f]{7,40}'
 
           if echo "$FIRST_COMMIT_MSG" | grep -qE "$MERGE_SHA_PATTERN"; then
-            echo "ℹ️ Latest commit is a merge commit (with SHA pattern). Checking the previous commit..."
-            SECOND_COMMIT_MSG="${COMMITS[1]}"
+            echo "ℹ️ Latest commit is a merge commit (SHA pattern). Checking previous commit..."
             echo "🔸 Previous commit message: $SECOND_COMMIT_MSG"
 
-            if check_patterns "$SECOND_COMMIT_MSG"; then
+            if [ -n "$SECOND_COMMIT_MSG" ] && check_patterns "$SECOND_COMMIT_MSG"; then
               echo "✅ Valid pattern found in previous (non-merge) commit message."
               exit 0
+            else
+              echo "❌ Previous commit message did not match expected pattern."
+              exit 1
             fi
           else
             if check_patterns "$FIRST_COMMIT_MSG"; then
