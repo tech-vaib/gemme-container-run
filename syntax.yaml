@@ -1,38 +1,69 @@
-name: Validate PR title or last commit message
-env:
-  PR_TITLE: ${{ github.event.pull_request.title }}
-run: |
-  set -e
-  
-  echo "🔎 PR Title: $PR_TITLE"
-  
-  LAST_COMMIT_MSG=$(git log -1 --pretty=%B)
-  echo "🔎 Last Commit Message: $LAST_COMMIT_MSG"
-  
-  # Function to test a message against all patterns using grep
-  check_patterns() {
-    local msg="$1"
-    echo "$msg" | grep -qE '^\[HIF-[0-9]+\] .+' && return 0
-    echo "$msg" | grep -qE '^\[PLM-P[0-9]+-[0-9]+\] .+' && return 0
-    echo "$msg" | grep -qE '^Coding style for [""][[][PLM-P[0-9]+-[0-9]+[]]' && return 0
-    echo "$msg" | grep -qE '^Coding style for [""][[][HIF-[0-9]+[]]' && return 0
-    return 1
-  }
-  
-  if check_patterns "$PR_TITLE"; then
-    echo "✅ Valid pattern found in PR title."
-    exit 0
-  fi
-  
-  if check_patterns "$LAST_COMMIT_MSG"; then
-    echo "✅ Valid pattern found in last commit message."
-    exit 0
-  fi
-  
-  echo "❌ Invalid PR title or commit message."
-  echo "PR title or last commit message must match one of these formats:"
-  echo "  [HIF-123] Some message"
-  echo "  [PLM-P12-345] Some message"
-  echo "  Coding style for \"[HIF-123] Some message\""
-  echo "  Coding style for \"[PLM-P12-345] Some message\""
-  exit 1
+name: Validate PR Title or Commit Message
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  validate-pr:
+    name: 🧩 Validate PR Title or Last Commit Message
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Needed to access last commit message
+
+      - name: Validate PR title or last commit message
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -e
+
+          echo "🔎 PR Title: $PR_TITLE"
+
+          # Get the last commit message
+          LAST_COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "🔎 Last Commit Message: $LAST_COMMIT_MSG"
+
+          # Function to test a message against allowed patterns
+          check_patterns() {
+            local msg="$1"
+
+            # Match: [HIF-123] Some message
+            echo "$msg" | grep -qE '^\[HIF-[0-9]+\] .+' && return 0
+
+            # Match: [PLM-P12-345] Some message
+            echo "$msg" | grep -qE '^\[PLM-P[0-9]+-[0-9]+\] .+' && return 0
+
+            # Match: Coding style for "[HIF-123] Some message"
+            echo "$msg" | grep -qE '^Coding style for "\[HIF-[0-9]+\] .+"' && return 0
+
+            # Match: Coding style for "[PLM-P12-345] Some message"
+            echo "$msg" | grep -qE '^Coding style for "\[PLM-P[0-9]+-[0-9]+\] .+"' && return 0
+
+            return 1
+          }
+
+          # Check PR title first
+          if check_patterns "$PR_TITLE"; then
+            echo "✅ Valid pattern found in PR title."
+            exit 0
+          fi
+
+          # If not, check last commit message
+          if check_patterns "$LAST_COMMIT_MSG"; then
+            echo "✅ Valid pattern found in last commit message."
+            exit 0
+          fi
+
+          # Otherwise, fail validation
+          echo "❌ Invalid PR title or commit message."
+          echo ""
+          echo "PR title or last commit message must match one of these formats:"
+          echo "  [HIF-123] Some message"
+          echo "  [PLM-P12-345] Some message"
+          echo "  Coding style for \"[HIF-123] Some message\""
+          echo "  Coding style for \"[PLM-P12-345] Some message\""
+          exit 1
