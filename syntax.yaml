@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 4  # a few commits for safety
+          fetch-depth: 4  # Fetch a few commits for safety
 
       - name: Validate PR title or commit message
         env:
@@ -42,24 +42,22 @@ jobs:
 
           echo "🔎 Checking commit messages..."
 
-          # Capture last 3 commit messages, using delimiter
-          COMMIT_LOG=$(git log -3 --pretty='%B__END__')
+          # Get the last two commit SHAs
+          COMMIT_SHAS=($(git log -2 --pretty=format:%H))
+          FIRST_COMMIT_MSG=$(git log -1 --pretty=%B "${COMMIT_SHAS[0]}" | tr -d '\r')
+          SECOND_COMMIT_MSG=$(git log -1 --pretty=%B "${COMMIT_SHAS[1]}" | tr -d '\r')
 
-          # Split commits into array safely
-          IFS='__END__' read -r -a COMMITS <<< "$COMMIT_LOG"
+          echo "🔸 Latest commit message:"
+          echo "$FIRST_COMMIT_MSG"
+          echo "🔸 Previous commit message:"
+          echo "$SECOND_COMMIT_MSG"
 
-          FIRST_COMMIT_MSG=$(echo "${COMMITS[0]}" | xargs)
-          SECOND_COMMIT_MSG=$(echo "${COMMITS[1]}" | xargs)
-
-          echo "🔸 Latest commit message: $FIRST_COMMIT_MSG"
-
-          # Regex for merge commits with SHA format
+          # Pattern for "Merge <sha> into <sha>"
           MERGE_SHA_PATTERN='^Merge [0-9a-f]{7,40} into [0-9a-f]{7,40}'
 
+          # If latest commit is a merge commit with SHA pattern → skip it
           if echo "$FIRST_COMMIT_MSG" | grep -qE "$MERGE_SHA_PATTERN"; then
             echo "ℹ️ Latest commit is a merge commit (SHA pattern). Checking previous commit..."
-            echo "🔸 Previous commit message: $SECOND_COMMIT_MSG"
-
             if [ -n "$SECOND_COMMIT_MSG" ] && check_patterns "$SECOND_COMMIT_MSG"; then
               echo "✅ Valid pattern found in previous (non-merge) commit message."
               exit 0
