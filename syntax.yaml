@@ -6,26 +6,22 @@ on:
 
 jobs:
   validate-pr:
-    name: 🧩 Validate PR Title or Last Commit Message
+    name: 🧩 Validate PR Title or Commit Message
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # Needed to access last commit message
+          fetch-depth: 3  # Fetch a few commits for safety
 
-      - name: Validate PR title or last commit message
+      - name: Validate PR title or commit message
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -e
 
           echo "🔎 PR Title: $PR_TITLE"
-
-          # Get the last commit message
-          LAST_COMMIT_MSG=$(git log -1 --pretty=%B)
-          echo "🔎 Last Commit Message: $LAST_COMMIT_MSG"
 
           # Function to test a message against allowed patterns
           check_patterns() {
@@ -46,22 +42,42 @@ jobs:
             return 1
           }
 
-          # Check PR title first
+          # ✅ Check PR title first
           if check_patterns "$PR_TITLE"; then
             echo "✅ Valid pattern found in PR title."
             exit 0
           fi
 
-          # If not, check last commit message
-          if check_patterns "$LAST_COMMIT_MSG"; then
-            echo "✅ Valid pattern found in last commit message."
-            exit 0
+          echo "🔎 Checking commit messages..."
+
+          # Get last 3 commits (for safety)
+          mapfile -t COMMITS < <(git log -3 --pretty=%B)
+
+          FIRST_COMMIT_MSG="${COMMITS[0]}"
+          echo "🔸 Latest commit message: $FIRST_COMMIT_MSG"
+
+          # Regex pattern for merge commit like: Merge dfgad8c877 into 5d7b68
+          MERGE_SHA_PATTERN='^Merge [0-9a-f]{7,40} into [0-9a-f]{7,40}'
+
+          if echo "$FIRST_COMMIT_MSG" | grep -qE "$MERGE_SHA_PATTERN"; then
+            echo "ℹ️ Latest commit is a merge commit (with SHA pattern). Checking the previous commit..."
+            SECOND_COMMIT_MSG="${COMMITS[1]}"
+            echo "🔸 Previous commit message: $SECOND_COMMIT_MSG"
+
+            if check_patterns "$SECOND_COMMIT_MSG"; then
+              echo "✅ Valid pattern found in previous (non-merge) commit message."
+              exit 0
+            fi
+          else
+            if check_patterns "$FIRST_COMMIT_MSG"; then
+              echo "✅ Valid pattern found in last commit message."
+              exit 0
+            fi
           fi
 
-          # Otherwise, fail validation
           echo "❌ Invalid PR title or commit message."
           echo ""
-          echo "PR title or last commit message must match one of these formats:"
+          echo "PR title or a non-merge commit message must match one of these formats:"
           echo "  [HIF-123] Some message"
           echo "  [PLM-P12-345] Some message"
           echo "  Coding style for \"[HIF-123] Some message\""
