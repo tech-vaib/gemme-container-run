@@ -1,3 +1,18 @@
+az ai project show \
+  --workspace-name <HUB_NAME> \
+  --resource-group <RESOURCE_GROUP> \
+  --name <PROJECT_NAME> \
+  --query identity
+
+az ai project update \
+  --workspace-name <HUB_NAME> \
+  --resource-group <RESOURCE_GROUP> \
+  --name <PROJECT_NAME> \
+  --enable-managed-identity true
+
+
+az ai project list
+
 az resource list --resource-type "Microsoft.MachineLearningServices/workspaces" -o table
 
 az resource update \
