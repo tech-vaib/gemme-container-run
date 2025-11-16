@@ -1,0 +1,82 @@
+az resource list --resource-type "Microsoft.MachineLearningServices/workspaces" -o table
+
+az resource show \
+  --resource-group <RESOURCE_GROUP> \
+  --name <HUB_NAME> \
+  --resource-type "Microsoft.MachineLearningServices/workspaces" \
+  --query "identity" -o json
+
+az resource list --resource-type "Microsoft.CognitiveServices/accounts" -o table
+
+az resource show \
+  --resource-group <RESOURCE_GROUP> \
+  --name <PROJECT_NAME> \
+  --resource-type "Microsoft.CognitiveServices/accounts" \
+  --query "identity" -o json
+
+
+az ml workspace show \
+  --resource-group <RESOURCE_GROUP> \
+  --name <WORKSPACE_NAME> \
+  --query identity
+
+
+az role assignment list \
+  --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.Storage/storageAccounts/<STORAGE_NAME>" \
+  -o table
+
+
+az resource show \
+  --resource-group <RESOURCE_GROUP> \
+  --name <PROJECT_NAME> \
+  --resource-type "Microsoft.CognitiveServices/accounts" \
+  --query "identity.principalId" -o tsv
+
+az role assignment create \
+  --role "Storage Blob Data Contributor" \
+  --assignee <PROJECT_MI_ID> \
+  --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.Storage/storageAccounts/<STORAGE_NAME>"
+
+
+az ml workspace show \
+  --resource-group <RESOURCE_GROUP> \
+  --name <WORKSPACE_NAME> \
+  --query "identity.principalId" -o tsv
+
+
+az role assignment create \
+  --role "Storage Blob Data Reader" \
+  --assignee <WORKSPACE_MI_ID> \
+  --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.Storage/storageAccounts/<STORAGE_NAME>"
+
+
+az resource show \
+  --resource-group <RESOURCE_GROUP> \
+  --name <HUB_NAME> \
+  --resource-type "Microsoft.MachineLearningServices/workspaces" \
+  --query "identity.principalId" -o tsv
+
+
+az role assignment create \
+  --role "Storage Blob Data Contributor" \
+  --assignee <HUB_MI_ID> \
+  --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.Storage/storageAccounts/<STORAGE_NAME]"
+
+
+az storage container list \
+  --account-name <STORAGE_NAME> \
+  --auth-mode login
+
+az resource show \
+  --resource-group <RESOURCE_GROUP> \
+  --name <PROJECT_NAME> \
+  --resource-type "Microsoft.CognitiveServices/accounts" \
+  --query identity
+
+az resource update \
+  --resource-group <RESOURCE_GROUP> \
+  --name <PROJECT_NAME> \
+  --resource-type "Microsoft.CognitiveServices/accounts" \
+  --set identity.type="SystemAssigned"
+
+
