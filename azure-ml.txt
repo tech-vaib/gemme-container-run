@@ -1,5 +1,53 @@
 az resource list --resource-type "Microsoft.MachineLearningServices/workspaces" -o table
 
+az resource update \
+  --resource-group <RG> \
+  --name <HUB_NAME> \
+  --resource-type "Microsoft.MachineLearningServices/workspaces" \
+  --set identity.type="SystemAssigned"
+
+
+az resource show \
+  --resource-group <RG> \
+  --name <HUB_NAME> \
+  --resource-type Microsoft.MachineLearningServices/workspaces \
+  --query identity
+
+HUB_MI_ID=$(az resource show \
+  --resource-group <RG> \
+  --name <HUB_NAME> \
+  --resource-type Microsoft.MachineLearningServices/workspaces \
+  --query "identity.principalId" -o tsv)
+
+az role assignment create \
+  --assignee $HUB_MI_ID \
+  --role "Storage Blob Data Contributor" \
+  --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/<RG>/providers/Microsoft.Storage/storageAccounts/<STORAGE_NAME>"
+
+
+az role assignment create \
+  --assignee <PROJECT_MI_OBJECT_ID> \
+  --role "Storage Blob Data Contributor" \
+  --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/<RG>/providers/Microsoft.Storage/storageAccounts/<STORAGE_NAME]"
+
+az extension add --name azure-ai
+az extension update --name azure-ai
+
+az ai project list --workspace-name <HUB_NAME> --resource-group <RG> -o table
+
+az ai project update \
+  --workspace-name <HUB_NAME> \
+  --resource-group <RG> \
+  --name <PROJECT_NAME> \
+  --enable-managed-identity true
+
+az ai project show \
+  --workspace-name <HUB_NAME> \
+  --resource-group <RG> \
+  --name <PROJECT_NAME> \
+  --query identity
+
+
 az resource show \
   --resource-group <RESOURCE_GROUP> \
   --name <HUB_NAME> \
