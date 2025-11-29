@@ -16,7 +16,7 @@ def main():
     client = genai.Client(
         vertexai=True,
         http_options=types.HttpOptions(api_version="v1"),
-        location="us-central1",   # NOT global
+        location="us-central1",
         project="your-gcp-project-id",
         credentials=credentials,
     )
@@ -26,13 +26,12 @@ def main():
     # ---------------------------------------------------------------------
     use_message = "my body fat is 20%, my bmi is 22, and my body water is 55%"
     CACHE_NAME = "keyword_rag_extraction"
-
     rag_system_prompt = "You are an expert health and fitness metrics analyzer."
 
     contents = [
         types.Content(
             role="user",
-            parts=[types.Part(text=use_message)]
+            parts=[types.Part(text=use_message)]  # <-- use keyword argument `text=...`
         )
     ]
 
@@ -45,7 +44,7 @@ def main():
             display_name=CACHE_NAME,
             system_instruction=rag_system_prompt,
             contents=contents,
-            ttl="3600s",  # 1-hour TTL
+            ttl="3600s",
         ),
     )
 
@@ -60,7 +59,7 @@ def main():
         contents=[
             types.Content(
                 role="user",
-                parts=[types.Part(text="Summarize my health status.")]
+                parts=[types.Part(text="Summarize my health status.")]  # <-- keyword argument
             )
         ],
         config=types.GenerateContentConfig(
