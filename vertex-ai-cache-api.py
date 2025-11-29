@@ -32,7 +32,7 @@ def main():
     contents = [
         types.Content(
             role="user",
-            parts=[types.Part.from_text(use_message)]
+            parts=[types.Part(text=use_message)]
         )
     ]
 
@@ -60,7 +60,7 @@ def main():
         contents=[
             types.Content(
                 role="user",
-                parts=[types.Part.from_text("Summarize my health status.")]
+                parts=[types.Part(text="Summarize my health status.")]
             )
         ],
         config=types.GenerateContentConfig(
