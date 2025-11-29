@@ -7,7 +7,7 @@ def main():
     # Load service-account credentials
     # ---------------------------------------------------------------------
     credentials = service_account.Credentials.from_service_account_file(
-        "/path/to/service-account.json"
+        "/path/to/service-account.json"  # <-- Replace with your service account key path
     )
 
     # ---------------------------------------------------------------------
@@ -15,10 +15,9 @@ def main():
     # ---------------------------------------------------------------------
     client = genai.Client(
         vertexai=True,
-        http_options=types.HttpOptions(api_version="v1"),
-        location="us-central1",
-        project="your-gcp-project-id",
-        credentials=credentials,
+        project="your-gcp-project-id",  # <-- Replace with your project ID
+        location="us-central1",          # MUST be regional
+        credentials=credentials
     )
 
     # ---------------------------------------------------------------------
@@ -31,12 +30,12 @@ def main():
     contents = [
         types.Content(
             role="user",
-            parts=[types.Part(text=use_message)]  # <-- use keyword argument `text=...`
+            parts=[types.Part(text=use_message)]  # Correct syntax for version 1.52.0
         )
     ]
 
     # ---------------------------------------------------------------------
-    # Create cache
+    # Create explicit cache
     # ---------------------------------------------------------------------
     cached = client.caches.create(
         model="gemini-2.5-flash",
@@ -44,7 +43,7 @@ def main():
             display_name=CACHE_NAME,
             system_instruction=rag_system_prompt,
             contents=contents,
-            ttl="3600s",
+            ttl="3600s",  # Cache TTL = 1 hour
         ),
     )
 
@@ -59,7 +58,7 @@ def main():
         contents=[
             types.Content(
                 role="user",
-                parts=[types.Part(text="Summarize my health status.")]  # <-- keyword argument
+                parts=[types.Part(text="Summarize my health status.")]
             )
         ],
         config=types.GenerateContentConfig(
@@ -70,9 +69,10 @@ def main():
     print("\n--- Model Response ---")
     print(response.text)
 
-    # Uncomment if you want to clean up
+    # ---------------------------------------------------------------------
+    # Optional: delete cache when done
+    # ---------------------------------------------------------------------
     # client.caches.delete(cached.name)
-
 
 if __name__ == "__main__":
     main()
