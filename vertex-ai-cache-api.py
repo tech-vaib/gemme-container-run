@@ -1,3 +1,6 @@
+gcloud projects add-iam-policy-binding your-project-id \
+    --member="serviceAccount:your-service-account@your-project-id.iam.gserviceaccount.com" \
+    --role="roles/serviceusage.serviceUsageConsumer"
 from google import genai
 from google.genai import types
 from google.oauth2 import service_account
