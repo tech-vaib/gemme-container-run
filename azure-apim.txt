@@ -1,0 +1,170 @@
+AzureDiagnostics
+| where Category == "ApplicationGatewayAccessLog"
+| where TimeGenerated > ago(1h)
+| where httpStatus_d == 504
+| project TimeGenerated, clientIP_s, requestUri_s, backendStatusCode_s, serverResponseLatency_s, backendResponseLatency_s, originalHost_s
+
+
+
+AzureDiagnostics
+| where Category == "ApplicationGatewayPerformanceLog"
+| where backendBBLatency != 0
+| project TimeGenerated, clientRtt, backendConnectTime, backendBBLatency
+
+
+AzureDiagnostics
+| where Category == "ApplicationGatewayProbeHealthStatus"
+| project TimeGenerated, backendServerIPAddress_s, health_s, poolName_s
+
+
+kubectl get events --field-selector type=Warning | grep -i snat
+Outbound SNAT Port Exhaustion on AGW or AKS Nodes
+
+
+AzureDiagnostics
+| where Category == "ApplicationGatewayAccessLog"
+| where httpStatus_d == 504
+| order by TimeGenerated desc
+| project TimeGenerated,
+         requestUri_s,
+         backendServerIPAddress_s,
+         backendStatusCode_s,
+         backendResponseLatency_s
+Interpret:
+Case A → backendResponseLatency_s < 1s AND backendStatusCode_s = 0
+
+❌ Backend unreachable under load
+❌ NodePort dropped traffic
+✔ Probably health probe failures
+
+Case B → backendResponseLatency_s ≈ 60s
+
+❌ App is too slow under load
+❌ AGW timeout reached
+✔ Need to scale pods or fix app latency
+
+Case C → backendStatusCode_s = 502 / 503
+
+❌ App returned errors under load
+✔ Need to inspect pod logs
+
+
+AzureDiagnostics
+| where Category == "ApplicationGatewayProbeHealthStatus"
+| project TimeGenerated, poolName_s, health_s, backendServerIPAddress_s
+
+If health shows:
+Unhealthy
+Unknown
+during load → THIS IS YOUR ROOT CAUSE.
+
+kubectl top pods
+
+===================
+Check Node Events for Port/SNAT Issues
+kubectl get events --all-namespaces --field-selector type=Warning | grep -Ei "conntrack|snat|port"
+
+Look for:
+
+Conntrack table full
+
+Failed to assign an IP
+
+Out of capacity
+
+IPTables restore failed
+
+SNAT port allocation failed
+===============================================================================================
+Check Node Network Metrics
+
+If you use Container Insights or Prometheus:
+
+Important metrics:
+
+kube_node_nw_conntrack_entries
+
+kube_node_nw_conntrack_entries_max
+
+node_netstat_TcpExt_TCPAbortOnMemory
+
+node_netstat_TcpExt_TCPTimeouts
+
+node_netstat_Tcp_CurrEstab
+
+If conntrack is >80% during load → SNAT/conntrack starvation.
+============================================
+PART 2 — Detect SNAT Port Exhaustion on Application Gateway
+
+AGW also uses SNAT ports for outbound connections to your AKS nodes.
+
+Under very high load, it can run out of source ports.
+
+🔍 1️⃣ AGW Diagnostic Logs Show SNAT Port Issue
+
+Look inside ApplicationGatewayFirewallLog or ApplicationGatewayAccessLog for:
+
+Failed to allocate SNAT ports
+
+Exhausted ephemeral ports
+
+Could not establish connection to backend
+
+Connection reset by peer
+
+These appear in Activity Log and Resource Health sometimes.
+===========================================
+Use Azure Monitor / Container Insights
+
+AKS integrates with Azure Monitor via Container Insights. This exposes node-level metrics including SNAT/conntrack usage.
+
+Metrics to check:
+Metric	Where to find	What it tells you
+node_conntrack_count	Azure Monitor → Metrics → Select your AKS cluster	Current number of connections tracked by the kernel (conntrack)
+node_conntrack_max	Azure Monitor → Metrics	Maximum conntrack entries allowed
+node_netstat_Tcp_CurrEstab	Metrics	Number of currently established TCP connections
+node_netstat_Tcp_TimeWait	Metrics	Number of sockets in TIME_WAIT, indicates port usage
+
+How to do it:
+
+Go to Azure Portal → Monitor → Metrics
+
+Scope to your AKS cluster / node pool
+
+Select Container Insights → Node Metrics
+
+Search for conntrack or TCP connections
+
+Graph the metrics under load
+
+⚠ If you see conntrack count approaching the max, your nodes are running out of ephemeral ports.
+=====================================
+ContainerInsights
+| where LogEntry_s contains "conntrack" or LogEntry_s contains "SNAT"
+| sort by TimeGenerated desc
+
+Look for warnings like:
+
+conntrack: table full
+
+SNAT port allocation failed
+
+Failed to assign IP
+
+==============================
+
+AzureDiagnostics
+| where Category == "ApplicationGatewayAccessLog"
+| where httpStatus_d == 504 or httpStatus_d == 502
+| project TimeGenerated, backendStatusCode_s, backendResponseLatency_s
+
+Interpretation for SNAT/conntrack exhaustion:
+
+backendStatusCode_s = 0
+
+backendResponseLatency_s < 5 ms (fast failure)
+
+Spikes under load
+
+→ Strong indicator that connections never reached pods because AGW ran out of SNAT ports or nodes ran out of ephemeral ports.
+===========================================
