@@ -1,0 +1,38 @@
+CONVERSATION_LOG:
+{{conversation_log}}
+
+LAST_USER_MESSAGE:
+{{last_user_message}}
+
+Task: Classify LAST_USER_MESSAGE as one of:
+Coaching, Health
+
+Rules (follow in order, stop at first match):
+
+If state == "Health":
+- If the user wants to learn about:
+  1) their health
+  2) their health data
+  3) insights about their health
+  4) general health knowledge
+  5) how to use the health app
+  → output Health
+- If the user asks for coaching, advice, or recommendations to improve health or achieve goals
+  → output Coaching
+- Otherwise → output Health
+
+Else:
+- If the user asks for coaching, advice, or recommendations to improve health or achieve goals
+  → output Coaching
+- If the message continues or follows up on the prior topic
+  → output Coaching
+- If the message switches topic and asks to learn about:
+  1) their health
+  2) their health data
+  3) insights about their health
+  4) general health knowledge
+  5) how to use the health app
+  → output Health
+- Otherwise → output Coaching
+
+Output exactly one word: Coaching or Health
