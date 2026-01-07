@@ -1,0 +1,9 @@
+Classify the LAST_USER_MESSAGE as one word only:
+
+Coaching → asks for advice, recommendations, or help improving health.
+Health → asks to learn about health, health data, insights, or app usage.
+
+Context:
+{{conversation_log}}
+
+Output only: Coaching or Health.
