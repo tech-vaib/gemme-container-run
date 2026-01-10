@@ -1,0 +1,158 @@
+name: Update Confluence Health Tables on Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-confluence:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install atlassian-python-api
+
+      - name: Build release table and update Confluence
+        env:
+          WATCH_PATH: "jinga/v2"
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_DATE: ${{ github.event.release.published_at }}
+          CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
+          CONFLUENCE_USERNAME: ${{ secrets.CONFLUENCE_USERNAME }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_PAGE_ID: ${{ secrets.CONFLUENCE_PAGE_ID }}
+        run: |
+          python - <<'EOF'
+          import os
+          import json
+          from datetime import datetime
+          from atlassian import Confluence
+
+          WATCH_PATH = os.environ["WATCH_PATH"]
+          RELEASE_TAG = os.environ["RELEASE_TAG"]
+          RELEASE_DATE_RAW = os.environ["RELEASE_DATE"]
+
+          release_date = datetime.fromisoformat(
+              RELEASE_DATE_RAW.replace("Z", "+00:00")
+          ).strftime("%Y-%m-%d %H:%M UTC")
+
+          # --- Confluence connection (proven logic) ---
+          confluence = Confluence(
+              url=os.environ["CONFLUENCE_URL"],
+              username=os.environ["CONFLUENCE_USERNAME"],
+              password=os.environ["CONFLUENCE_API_TOKEN"],
+              cloud=True,
+          )
+
+          page_id = os.environ["CONFLUENCE_PAGE_ID"]
+          page = confluence.get_page_by_id(page_id=page_id, expand="body.storage")
+          page_title = page["title"]
+          page_content = page["body"]["storage"]["value"]
+
+          # --- Build release table ---
+          rows = []
+
+          for root, _, files in os.walk(WATCH_PATH):
+              for file in files:
+                  if not file.endswith(".json"):
+                      continue
+
+                  path = os.path.join(root, file)
+                  try:
+                      with open(path, "r", encoding="utf-8") as f:
+                          data = json.load(f)
+                  except Exception:
+                      continue
+
+                  keys = list(data.keys())
+                  for i in range(len(keys) - 2):
+                      if keys[i:i+3] == ["health_id", "name", "category"]:
+                          rows.append((
+                              file,
+                              data["health_id"],
+                              data["name"],
+                              data["category"]
+                          ))
+                          break
+
+          rows.sort()
+
+          table_html = (
+              "<table>"
+              "<tr>"
+              "<th>File</th>"
+              "<th>Health ID</th>"
+              "<th>Name</th>"
+              "<th>Category</th>"
+              "</tr>"
+          )
+
+          for f, hid, name, cat in rows:
+              table_html += (
+                  f"<tr>"
+                  f"<td>{f}</td>"
+                  f"<td>{hid}</td>"
+                  f"<td>{name}</td>"
+                  f"<td>{cat}</td>"
+                  f"</tr>"
+              )
+
+          table_html += "</table>"
+
+          # --- Release block ---
+          start = f"<!-- START-RELEASE:{RELEASE_TAG} -->"
+          end = f"<!-- END-RELEASE:{RELEASE_TAG} -->"
+
+          release_block = (
+              f"{start}"
+              f"<h2>Release {RELEASE_TAG} – {release_date}</h2>"
+              f"{table_html}"
+              f"<hr/>"
+              f"{end}"
+          )
+
+          # --- Ensure DEV section stays on top ---
+          if "<!-- DEV-ANCHOR -->" not in page_content:
+              page_content = (
+                  "<!-- DEV-ANCHOR -->"
+                  "<h2>Dev Branch</h2>"
+                  "<!-- START-TABLE:dev -->"
+                  "<p>(Updated on merges to dev)</p>"
+                  "<!-- END-TABLE:dev -->"
+                  "<hr/>"
+                  + page_content
+              )
+
+          # --- Insert release block below DEV, newest first ---
+          anchor_split = page_content.split("<!-- DEV-ANCHOR -->", 1)
+          updated_content = (
+              anchor_split[0]
+              + "<!-- DEV-ANCHOR -->"
+              + anchor_split[1].split("<hr/>", 1)[0]
+              + "<hr/>"
+              + release_block
+              + anchor_split[1].split("<hr/>", 1)[1]
+          )
+
+          # --- Update page ---
+          confluence.update_page(
+              page_id=page_id,
+              title=page_title,
+              body=updated_content,
+              representation="storage",
+          )
+
+          print(f"✅ Confluence updated for release {RELEASE_TAG}")
+          print(f"📅 Release date: {release_date}")
+          print(f"📊 Rows written: {len(rows)}")
+          EOF
