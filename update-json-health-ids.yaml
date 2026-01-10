@@ -1,0 +1,137 @@
+name: Update Confluence Health Tables
+
+on:
+  push:
+    branches:
+      - dev
+      - maintenance
+  workflow_dispatch:
+    inputs:
+      force_override:
+        description: "Force table regeneration"
+        required: false
+        default: "false"
+
+jobs:
+  update-confluence:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install atlassian-python-api
+
+      - name: Build branch table and update Confluence
+        env:
+          WATCH_PATH: "jinga/v2"
+          BRANCH_NAME: ${{ github.ref_name }}
+          FORCE_OVERRIDE: ${{ github.event.inputs.force_override || 'false' }}
+          CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
+          CONFLUENCE_USERNAME: ${{ secrets.CONFLUENCE_USERNAME }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_PAGE_ID: ${{ secrets.CONFLUENCE_PAGE_ID }}
+        run: |
+          python - <<'EOF'
+          import os
+          from atlassian import Confluence
+
+          WATCH_PATH = os.environ["WATCH_PATH"]
+          BRANCH = os.environ["BRANCH_NAME"]
+          FORCE_OVERRIDE = os.environ.get("FORCE_OVERRIDE", "false").lower() == "true"
+
+          # --- Confluence connection (same proven logic) ---
+          confluence = Confluence(
+              url=os.environ["CONFLUENCE_URL"],
+              username=os.environ["CONFLUENCE_USERNAME"],
+              password=os.environ["CONFLUENCE_API_TOKEN"],
+              cloud=True,
+          )
+
+          page_id = os.environ["CONFLUENCE_PAGE_ID"]
+          page = confluence.get_page_by_id(page_id=page_id, expand="body.storage")
+          page_title = page["title"]
+          page_content = page["body"]["storage"]["value"]
+
+          # --- Build HTML table for THIS branch ---
+          rows = []
+          for root, _, files in os.walk(WATCH_PATH):
+              for file in files:
+                  if not file.endswith(".json"):
+                      continue
+
+                  full_path = os.path.join(root, file)
+                  try:
+                      with open(full_path, "r", encoding="utf-8") as f:
+                          import json
+                          data = json.load(f)
+                  except Exception:
+                      continue
+
+                  keys = list(data.keys())
+                  for i in range(len(keys) - 2):
+                      if keys[i:i+3] == ["health_id", "name", "category"]:
+                          rows.append((
+                              file,
+                              data.get("health_id"),
+                              data.get("name"),
+                              data.get("category")
+                          ))
+                          break
+
+          table_html = (
+              "<table>"
+              "<tr><th>File</th><th>Health ID</th><th>Name</th><th>Category</th></tr>"
+          )
+
+          for file, hid, name, cat in sorted(rows):
+              table_html += (
+                  f"<tr>"
+                  f"<td>{file}</td>"
+                  f"<td>{hid}</td>"
+                  f"<td>{name}</td>"
+                  f"<td>{cat}</td>"
+                  f"</tr>"
+              )
+
+          table_html += "</table>"
+
+          # --- Branch-scoped markers ---
+          start_marker = f"<!-- START-TABLE:{BRANCH} -->"
+          end_marker = f"<!-- END-TABLE:{BRANCH} -->"
+          new_block = f"{start_marker}{table_html}{end_marker}"
+
+          # --- Replace or append ONLY this branch ---
+          if start_marker in page_content and end_marker in page_content:
+              before = page_content.split(start_marker)[0]
+              after = page_content.split(end_marker)[1]
+              updated_content = before + new_block + after
+          else:
+              updated_content = (
+                  page_content
+                  + f"<h2>{BRANCH.capitalize()} Branch</h2>"
+                  + new_block
+              )
+
+          # --- Update Confluence page ---
+          confluence.update_page(
+              page_id=page_id,
+              title=page_title,
+              body=updated_content,
+              representation="storage",
+          )
+
+          print(f"✅ Confluence updated successfully for branch: {BRANCH}")
+          print(f"📁 Path scanned: {WATCH_PATH}")
+          print(f"📊 Rows written: {len(rows)}")
+          EOF
